@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Just Be Puzz</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; width: 100%; overflow: hidden; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  #puzzle-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .text-wrap {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    pointer-events: none;
+  }
+  .logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(42px, 8vw, 80px);
+    color: #111;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: 18px;
+    animation: fadeUp 0.9s ease both;
+  }
+  .tagline {
+    font-size: clamp(15px, 2.2vw, 21px);
+    color: #111;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    animation: fadeUp 0.9s 0.2s ease both;
+    opacity: 0;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="puzzle-canvas"></canvas>
+
+<div class="text-wrap" id="text-wrap">
+  <div class="logo">Just Be Puzz</div>
+  <div class="tagline">We are putting the pieces together.</div>
+</div>
+
+<script>
+const canvas = document.getElementById('puzzle-canvas');
+const ctx    = canvas.getContext('2d');
+const textEl = document.getElementById('text-wrap');
+
+// ── CLEAR ZONE around text (measured after layout) ──
+const PADDING = 80; // px buffer around text block
+let clearZone = { x: 0, y: 0, w: 0, h: 0 };
+
+function measureClearZone() {
+  const r = textEl.getBoundingClientRect();
+  clearZone = {
+    x: r.left   - PADDING,
+    y: r.top    - PADDING,
+    w: r.width  + PADDING * 2,
+    h: r.height + PADDING * 2,
+  };
+}
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  measureClearZone();
+}
+resize();
+window.addEventListener('resize', resize);
+// Re-measure once fonts settle
+setTimeout(measureClearZone, 600);
+
+// ── DOES A POINT FALL IN THE CLEAR ZONE? ──
+function inClearZone(x, y, margin) {
+  const m = margin || 0;
+  return (
+    x > clearZone.x - m &&
+    x < clearZone.x + clearZone.w + m &&
+    y > clearZone.y - m &&
+    y < clearZone.y + clearZone.h + m
+  );
+}
+
+// ── FIND A LANDING SPOT OUTSIDE THE CLEAR ZONE ──
+function safeLandingSpot(sz) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const margin = sz * 1.4;
+  let attempts = 0;
+  while (attempts < 80) {
+    const tx = margin + Math.random() * (W - margin * 2);
+    const ty = margin + Math.random() * (H - margin * 2);
+    if (!inClearZone(tx, ty, sz * 1.2)) return { tx, ty };
+    attempts++;
+  }
+  // Fallback: pick a corner quadrant
+  const corners = [
+    { tx: W * 0.15, ty: H * 0.15 },
+    { tx: W * 0.85, ty: H * 0.15 },
+    { tx: W * 0.15, ty: H * 0.85 },
+    { tx: W * 0.85, ty: H * 0.85 },
+  ];
+  return corners[Math.floor(Math.random() * corners.length)];
+}
+
+// ── PUZZLE PIECE SHAPE ──
+function drawPiece(cx, cy, sz, tabs, rotation) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+
+  const r = sz * 0.28;
+
+  ctx.beginPath();
+  // top
+  ctx.moveTo(-sz, -sz);
+  ctx.lineTo(-sz * 0.35, -sz);
+  if (tabs[0] !== 0) {
+    ctx.bezierCurveTo(-sz*0.35, -sz - tabs[0]*r*0.5,  sz*0.35, -sz - tabs[0]*r*2.2,  sz*0.35, -sz);
+  }
+  ctx.lineTo(sz, -sz);
+  // right
+  ctx.lineTo(sz, -sz * 0.35);
+  if (tabs[1] !== 0) {
+    ctx.bezierCurveTo(sz + tabs[1]*r*0.5, -sz*0.35,  sz + tabs[1]*r*2.2,  sz*0.35,  sz,  sz*0.35);
+  }
+  ctx.lineTo(sz, sz);
+  // bottom
+  ctx.lineTo(sz * 0.35, sz);
+  if (tabs[2] !== 0) {
+    ctx.bezierCurveTo(sz*0.35, sz + tabs[2]*r*0.5,  -sz*0.35, sz + tabs[2]*r*2.2,  -sz*0.35, sz);
+  }
+  ctx.lineTo(-sz, sz);
+  // left
+  ctx.lineTo(-sz, sz * 0.35);
+  if (tabs[3] !== 0) {
+    ctx.bezierCurveTo(-sz - tabs[3]*r*0.5, sz*0.35,  -sz - tabs[3]*r*2.2, -sz*0.35,  -sz, -sz*0.35);
+  }
+  ctx.lineTo(-sz, -sz);
+  ctx.closePath();
+  ctx.restore();
+}
+
+// ── PIECE POOL ──
+const pieces = [];
+let nextSpawn = 0;
+const SPAWN_INTERVAL = 500;
+const MAX_PIECES = 40;
+
+function randomTabs() {
+  return [0,1,2,3].map(() => (Math.random() > 0.5 ? 1 : -1));
+}
+
+function spawnPiece() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const sz  = 34 + Math.random() * 42;
+  const rot = (Math.random() - 0.5) * Math.PI;
+  const edge = Math.floor(Math.random() * 4);
+  const pad  = sz * 3;
+  let sx, sy;
+
+  if      (edge === 0) { sx = Math.random() * W; sy = -pad; }
+  else if (edge === 1) { sx = W + pad;            sy = Math.random() * H; }
+  else if (edge === 2) { sx = Math.random() * W; sy = H + pad; }
+  else                 { sx = -pad;               sy = Math.random() * H; }
+
+  const { tx, ty } = safeLandingSpot(sz);
+  const targetRot  = (Math.random() - 0.5) * Math.PI * 0.5;
+  const duration   = 850 + Math.random() * 600;
+
+  pieces.push({ sx, sy, tx, ty, cx: sx, cy: sy, sz, tabs: randomTabs(),
+    rot, targetRot, startRot: rot, duration, elapsed: 0,
+    phase: 'flying', landedAt: 0, alpha: 0, _bounceScale: 1 });
+}
+
+// ── EASING ──
+function easeOutCubic(t)  { return 1 - Math.pow(1 - t, 3); }
+function easeInOutQuad(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
+
+// ── LOOP ──
+let last = null;
+
+function loop(ts) {
+  if (!last) last = ts;
+  const dt = ts - last;
+  last = ts;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (pieces.length < MAX_PIECES && ts > nextSpawn) {
+    spawnPiece();
+    nextSpawn = ts + SPAWN_INTERVAL;
+  }
+
+  for (const p of pieces) {
+    if (p.phase === 'flying') {
+      p.elapsed += dt;
+      const t = Math.min(p.elapsed / p.duration, 1);
+      const e = easeOutCubic(t);
+      p.cx  = p.sx + (p.tx - p.sx) * e;
+      p.cy  = p.sy + (p.ty - p.sy) * e;
+      p.rot = p.startRot + (p.targetRot - p.startRot) * easeInOutQuad(t);
+      p.alpha = Math.min(t / 0.3, 1) * 0.6;
+      if (t >= 1) { p.phase = 'landing'; p.landedAt = ts; }
+    }
+
+    if (p.phase === 'landing') {
+      const t = Math.min((ts - p.landedAt) / 220, 1);
+      p._bounceScale = 1 + Math.sin(t * Math.PI) * 0.06;
+      if (t >= 1) { p.phase = 'settled'; p._bounceScale = 1; }
+    }
+
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    ctx.translate(p.cx, p.cy);
+    ctx.scale(p._bounceScale, p._bounceScale);
+    drawPiece(0, 0, p.sz, p.tabs, p.rot);
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth   = 1.8;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
